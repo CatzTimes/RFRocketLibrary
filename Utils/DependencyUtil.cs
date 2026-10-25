@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -13,6 +14,52 @@ namespace RFRocketLibrary.Utils
     public static class DependencyUtil
     {
         #region Methods
+
+        /// <summary>
+        /// Allowed download hosts for dependency assemblies.
+        /// </summary>
+        private static readonly string[] AllowedHosts = { "cdn.jsdelivr.net", "raw.githubusercontent.com", "gitlab.com" };
+
+        /// <summary>
+        /// Validates a dependency download URL before any network request is made:
+        /// only https is allowed, the host must be whitelisted, and the resolved
+        /// addresses must not point at loopback/private/reserved ranges (blocks
+        /// misconfigured links and trivial DNS rebinding toward internal services).
+        /// </summary>
+        public static void ValidateDependencyUrl(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+                throw new InvalidOperationException($"Blocked dependency URL (https only): {url}");
+
+            if (!AllowedHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Blocked dependency URL host '{uri.Host}' (not whitelisted).");
+
+            foreach (var address in Dns.GetHostAddresses(uri.Host))
+            {
+                if (IPAddress.IsLoopback(address)
+                    || (address.AddressFamily == AddressFamily.InterNetwork && (
+                           address.GetAddressBytes()[0] == 10
+                           || (address.GetAddressBytes()[0] == 172 && address.GetAddressBytes()[1] >= 16 && address.GetAddressBytes()[1] <= 31)
+                           || (address.GetAddressBytes()[0] == 192 && address.GetAddressBytes()[1] == 168)
+                           || (address.GetAddressBytes()[0] == 169 && address.GetAddressBytes()[1] == 254)))
+                    || (address.AddressFamily == AddressFamily.InterNetworkV6 && (
+                           address.IsIPv6LinkLocal || address.IsIPv6SiteLocal)))
+                    throw new InvalidOperationException(
+                        $"Blocked dependency URL '{url}': host resolves to a loopback/private/reserved address ({address}).");
+            }
+        }
+
+        private static byte[] DownloadAssembly(WebClient client, string url)
+        {
+            ValidateDependencyUrl(url);
+            return client.DownloadData(url);
+        }
+
+        private static async Task<byte[]> DownloadAssemblyAsync(WebClient client, string url)
+        {
+            ValidateDependencyUrl(url);
+            return await client.DownloadDataTaskAsync(url);
+        }
 
         public static bool CanBeLoaded(EDependency dependency)
         {
@@ -79,7 +126,7 @@ namespace RFRocketLibrary.Utils
                 {
                     try
                     {
-                        assembly = wc.DownloadData(typeof(DependencyLink)
+                        assembly = DownloadAssembly(wc, typeof(DependencyLink)
                             .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
                             .ToString());
                     }
@@ -87,7 +134,7 @@ namespace RFRocketLibrary.Utils
                     {
                         try
                         {
-                            assembly = wc.DownloadData(typeof(DependencyLink).GetField(dependency + "Mirror").GetValue(null)
+                            assembly = DownloadAssembly(wc, typeof(DependencyLink).GetField(dependency + "Mirror").GetValue(null)
                             .ToString());
                         }
                         catch { }
@@ -98,7 +145,7 @@ namespace RFRocketLibrary.Utils
             {
                 try
                 {
-                    assembly = wc.DownloadData(typeof(DependencyLink)
+                    assembly = DownloadAssembly(wc, typeof(DependencyLink)
                         .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
                         .ToString());
                 }
@@ -106,7 +153,7 @@ namespace RFRocketLibrary.Utils
                 {
                     try
                     {
-                        assembly = wc.DownloadData(typeof(DependencyLink).GetField(dependency + "Mirror").GetValue(null)
+                        assembly = DownloadAssembly(wc, typeof(DependencyLink).GetField(dependency + "Mirror").GetValue(null)
                             .ToString());
                     }
                     catch { }
@@ -147,13 +194,13 @@ namespace RFRocketLibrary.Utils
                 {
                     try
                     {
-                        assembly = await wc.DownloadDataTaskAsync(typeof(DependencyLink)
+                        assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink)
                             .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
                             .ToString());
                     }
                     catch
                     {
-                        assembly = await wc.DownloadDataTaskAsync(typeof(DependencyLink).GetField(dependency + "Mirror")
+                        assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink).GetField(dependency + "Mirror")
                             .GetValue(null)
                             .ToString());
                     }
@@ -163,13 +210,13 @@ namespace RFRocketLibrary.Utils
             {
                 try
                 {
-                    assembly = await wc.DownloadDataTaskAsync(typeof(DependencyLink)
+                    assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink)
                         .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
                         .ToString());
                 }
                 catch
                 {
-                    assembly = await wc.DownloadDataTaskAsync(typeof(DependencyLink).GetField(dependency + "Mirror")
+                    assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink).GetField(dependency + "Mirror")
                         .GetValue(null)
                         .ToString());
                 }

@@ -360,10 +360,18 @@ namespace RocketExtensions.Utilities
         {
             // QueueUserWorkItem callbacks are `async void` under the hood here: an escaping
             // exception would crash the whole process. Log instead (signatures are frozen
-            // by binary compatibility).
-            var caller = new StackTrace().GetFrame(2).GetMethod().ReflectedType.Assembly.GetName().Name;
-            Rocket.Core.Logging.Logger.LogError($"[{caller}] [ERROR] ThreadTool.QueueOnThreadPool: {e.Message}");
-            Rocket.Core.Logging.Logger.LogError($"[{caller}] [ERROR] Details: {e}");
+            // by binary compatibility). The report itself is guarded: Rocket's logging chain
+            // needs the game engine and must not replace the original failure with a crash.
+            try
+            {
+                var caller = new StackTrace().GetFrame(2).GetMethod().ReflectedType.Assembly.GetName().Name;
+                Rocket.Core.Logging.Logger.LogError($"[{caller}] [ERROR] ThreadTool.QueueOnThreadPool: {e.Message}");
+                Rocket.Core.Logging.Logger.LogError($"[{caller}] [ERROR] Details: {e}");
+            }
+            catch
+            {
+                // Ignore the reporter failure.
+            }
         }
 
         public static void QueueOnThreadPool(TaskPattern task)

@@ -56,6 +56,32 @@ namespace RFRocketLibrary.Utils
             return client.DownloadData(url);
         }
 
+        // Logging goes through Rocket's chain, which needs the game engine; on hosts without
+        // it the report must not replace the original failure with a crash.
+        private static void LogWarningSafe(string message)
+        {
+            try
+            {
+                Logger.LogWarning(message);
+            }
+            catch
+            {
+                // Ignore the reporter failure.
+            }
+        }
+
+        private static void LogErrorSafe(string message)
+        {
+            try
+            {
+                Logger.LogError(message);
+            }
+            catch
+            {
+                // Ignore the reporter failure.
+            }
+        }
+
         private static async Task<byte[]> DownloadAssemblyAsync(WebClient client, string url)
         {
             ValidateDependencyUrl(url);
@@ -92,7 +118,7 @@ namespace RFRocketLibrary.Utils
                 var expected = GetExpectedIntegrity(dependency);
                 if (!string.IsNullOrEmpty(expected) && GetIntegrity(data) != expected)
                 {
-                    Logger.LogWarning(
+                    LogWarningSafe(
                         $"[DependencyUtil] Cached '{dependency}' failed the integrity check (corrupted or outdated); downloading it again.");
                     try
                     {
@@ -100,7 +126,7 @@ namespace RFRocketLibrary.Utils
                     }
                     catch (Exception e)
                     {
-                        Logger.LogWarning($"[DependencyUtil] Failed to remove the corrupted cache file '{cachePath}': {e.Message}");
+                        LogWarningSafe($"[DependencyUtil] Failed to remove the corrupted cache file '{cachePath}': {e.Message}");
                     }
 
                     return null;
@@ -110,7 +136,7 @@ namespace RFRocketLibrary.Utils
             }
             catch (Exception e)
             {
-                Logger.LogWarning($"[DependencyUtil] Failed to read cached '{dependency}' ({cachePath}): {e.Message}");
+                LogWarningSafe($"[DependencyUtil] Failed to read cached '{dependency}' ({cachePath}): {e.Message}");
                 return null;
             }
         }
@@ -201,7 +227,7 @@ namespace RFRocketLibrary.Utils
                 }
                 catch (Exception e)
                 {
-                    Logger.LogWarning($"[DependencyUtil] Primary download for '{dependency}' failed: {e.Message}");
+                    LogWarningSafe($"[DependencyUtil] Primary download for '{dependency}' failed: {e.Message}");
                 }
 
                 if (assembly == null)
@@ -212,7 +238,7 @@ namespace RFRocketLibrary.Utils
                     }
                     catch (Exception e)
                     {
-                        Logger.LogWarning($"[DependencyUtil] Mirror download for '{dependency}' failed: {e.Message}");
+                        LogWarningSafe($"[DependencyUtil] Mirror download for '{dependency}' failed: {e.Message}");
                     }
                 }
 
@@ -224,14 +250,14 @@ namespace RFRocketLibrary.Utils
                     }
                     catch (Exception e)
                     {
-                        Logger.LogWarning($"[DependencyUtil] Failed to cache '{dependency}' ({cachePath}): {e.Message}");
+                        LogWarningSafe($"[DependencyUtil] Failed to cache '{dependency}' ({cachePath}): {e.Message}");
                     }
                 }
             }
 
             if (assembly == null)
             {
-                Logger.LogError(
+                LogErrorSafe(
                     $"[DependencyUtil] Unable to load dependency '{dependency}': every download failed and no valid cache exists.");
                 throw new InvalidOperationException(
                     $"Dependency '{dependency}' could not be downloaded and no valid cache is available. See the log for details.");
@@ -264,7 +290,7 @@ namespace RFRocketLibrary.Utils
                 }
                 catch (Exception e)
                 {
-                    Logger.LogWarning($"[DependencyUtil] Primary download for '{dependency}' failed: {e.Message}");
+                    LogWarningSafe($"[DependencyUtil] Primary download for '{dependency}' failed: {e.Message}");
                 }
 
                 if (assembly == null)
@@ -275,7 +301,7 @@ namespace RFRocketLibrary.Utils
                     }
                     catch (Exception e)
                     {
-                        Logger.LogWarning($"[DependencyUtil] Mirror download for '{dependency}' failed: {e.Message}");
+                        LogWarningSafe($"[DependencyUtil] Mirror download for '{dependency}' failed: {e.Message}");
                     }
                 }
 
@@ -287,14 +313,14 @@ namespace RFRocketLibrary.Utils
                     }
                     catch (Exception e)
                     {
-                        Logger.LogWarning($"[DependencyUtil] Failed to cache '{dependency}' ({cachePath}): {e.Message}");
+                        LogWarningSafe($"[DependencyUtil] Failed to cache '{dependency}' ({cachePath}): {e.Message}");
                     }
                 }
             }
 
             if (assembly == null)
             {
-                Logger.LogError(
+                LogErrorSafe(
                     $"[DependencyUtil] Unable to load dependency '{dependency}': every download failed and no valid cache exists.");
                 throw new InvalidOperationException(
                     $"Dependency '{dependency}' could not be downloaded and no valid cache is available. See the log for details.");

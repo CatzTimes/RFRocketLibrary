@@ -38,8 +38,17 @@ namespace RocketExtensions.Models
             {
                 Object = null;
                 Component = null;
-                Logger.LogError($"[FastTaskDispatcher] Failed to create the dispatcher (is this the Unity main thread?): {e.Message}");
-                Logger.LogError($"[FastTaskDispatcher] Details: {e}");
+                // Logging goes through Rocket's chain, which needs the game engine; on hosts
+                // without it the report must not replace the original failure with a crash.
+                try
+                {
+                    Logger.LogError($"[FastTaskDispatcher] Failed to create the dispatcher (is this the Unity main thread?): {e.Message}");
+                    Logger.LogError($"[FastTaskDispatcher] Details: {e}");
+                }
+                catch
+                {
+                    // Ignore the reporter failure; the next game-thread call retries anyway.
+                }
             }
         }
 

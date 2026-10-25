@@ -122,8 +122,17 @@ namespace RFRocketLibrary.Helpers.DiscordWebhook
             }
             catch (Exception e)
             {
-                Logger.LogError($"[WebhookService] {request.Method} request failed: {e.Message}");
-                Logger.LogError($"[WebhookService] Details: {e}");
+                // Logging goes through Rocket's chain, which needs the game engine; on hosts
+                // without it the report must not escape the async void and crash the process.
+                try
+                {
+                    Logger.LogError($"[WebhookService] {request.Method} request failed: {e.Message}");
+                    Logger.LogError($"[WebhookService] Details: {e}");
+                }
+                catch
+                {
+                    // Ignore the reporter failure.
+                }
             }
         }
     }

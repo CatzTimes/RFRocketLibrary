@@ -13,6 +13,12 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
+  <!-- The test suite under tests/ has its own project; keep the default glob out of it. -->
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <None Remove="tests\**" />
+  </ItemGroup>
+
   <!--
     Modernized build: game/framework assemblies now come from the always up-to-date
     RocketModFix redistributable NuGet packages instead of local HintPath copies.
@@ -32,3 +38,4 @@
   </ItemGroup>
 
 </Project>
+

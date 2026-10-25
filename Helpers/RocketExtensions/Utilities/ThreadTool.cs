@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using RocketExtensions.Models;
@@ -355,30 +356,80 @@ namespace RocketExtensions.Utilities
             return argue;
         }
 
+        private static void LogThreadPoolFault(Exception e)
+        {
+            // QueueUserWorkItem callbacks are `async void` under the hood here: an escaping
+            // exception would crash the whole process. Log instead (signatures are frozen
+            // by binary compatibility).
+            var caller = new StackTrace().GetFrame(2).GetMethod().ReflectedType.Assembly.GetName().Name;
+            Rocket.Core.Logging.Logger.LogError($"[{caller}] [ERROR] ThreadTool.QueueOnThreadPool: {e.Message}");
+            Rocket.Core.Logging.Logger.LogError($"[{caller}] [ERROR] Details: {e}");
+        }
+
         public static void QueueOnThreadPool(TaskPattern task)
         {
-            async void CallBack(object _) => await task();
+            async void CallBack(object _)
+            {
+                try
+                {
+                    await task();
+                }
+                catch (Exception e)
+                {
+                    LogThreadPoolFault(e);
+                }
+            }
 
             ThreadPool.QueueUserWorkItem(CallBack);
         }
 
         public static void QueueOnThreadPool<TA>(TaskPattern<TA> task, TA arg1)
         {
-            async void CallBack(object _) => await task(arg1);
+            async void CallBack(object _)
+            {
+                try
+                {
+                    await task(arg1);
+                }
+                catch (Exception e)
+                {
+                    LogThreadPoolFault(e);
+                }
+            }
 
             ThreadPool.QueueUserWorkItem(CallBack);
         }
 
         public static void QueueOnThreadPool<TA, TB>(TaskPattern<TA, TB> task, TA arg1, TB arg2)
         {
-            async void CallBack(object _) => await task(arg1, arg2);
+            async void CallBack(object _)
+            {
+                try
+                {
+                    await task(arg1, arg2);
+                }
+                catch (Exception e)
+                {
+                    LogThreadPoolFault(e);
+                }
+            }
 
             ThreadPool.QueueUserWorkItem(CallBack);
         }
 
         public static void QueueOnThreadPool<TA, TB, TC>(TaskPattern<TA, TB, TC> task, TA arg1, TB arg2, TC arg3)
         {
-            async void CallBack(object _) => await task(arg1, arg2, arg3);
+            async void CallBack(object _)
+            {
+                try
+                {
+                    await task(arg1, arg2, arg3);
+                }
+                catch (Exception e)
+                {
+                    LogThreadPoolFault(e);
+                }
+            }
 
             ThreadPool.QueueUserWorkItem(CallBack);
         }
@@ -386,7 +437,17 @@ namespace RocketExtensions.Utilities
         public static void QueueOnThreadPool<TA, TB, TC, TD>(TaskPattern<TA, TB, TC, TD> task, TA arg1, TB arg2,
             TC arg3, TD arg4)
         {
-            async void CallBack(object _) => await task(arg1, arg2, arg3, arg4);
+            async void CallBack(object _)
+            {
+                try
+                {
+                    await task(arg1, arg2, arg3, arg4);
+                }
+                catch (Exception e)
+                {
+                    LogThreadPoolFault(e);
+                }
+            }
 
             ThreadPool.QueueUserWorkItem(CallBack);
         }
@@ -395,7 +456,17 @@ namespace RocketExtensions.Utilities
             TB arg2,
             TC arg3, TD arg4, TE arg5)
         {
-            async void CallBack(object _) => await task(arg1, arg2, arg3, arg4, arg5);
+            async void CallBack(object _)
+            {
+                try
+                {
+                    await task(arg1, arg2, arg3, arg4, arg5);
+                }
+                catch (Exception e)
+                {
+                    LogThreadPoolFault(e);
+                }
+            }
 
             ThreadPool.QueueUserWorkItem(CallBack);
         }

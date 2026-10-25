@@ -22,10 +22,25 @@ namespace RocketExtensions.Models
             if (Initialized)
                 return;
 
-            Initialized = true;
-            Object = new GameObject("RocketExtensions.FastTaskDispatcher");
-            DontDestroyOnLoad(Object);
-            Component = Object.AddComponent<FastTaskDispatcher>();
+            try
+            {
+                // Creating a GameObject is only legal on Unity's main thread. The initialized
+                // flag used to be set before creation, so a first call from another thread
+                // permanently disabled the dispatcher and every queued action was silently
+                // dropped. Only mark initialized once the component actually exists; failed
+                // attempts stay retryable so a later game-thread call can bring it up.
+                Object = new GameObject("RocketExtensions.FastTaskDispatcher");
+                DontDestroyOnLoad(Object);
+                Component = Object.AddComponent<FastTaskDispatcher>();
+                Initialized = true;
+            }
+            catch (Exception e)
+            {
+                Object = null;
+                Component = null;
+                Logger.LogError($"[FastTaskDispatcher] Failed to create the dispatcher (is this the Unity main thread?): {e.Message}");
+                Logger.LogError($"[FastTaskDispatcher] Details: {e}");
+            }
         }
 
         public static void QueueOnMainThread(Action action, float time = 0f)

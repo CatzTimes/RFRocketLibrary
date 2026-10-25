@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Threading.Tasks;
 using RFRocketLibrary.Constants;
 using RFRocketLibrary.Enum;
+using Logger = Rocket.Core.Logging.Logger;
 
 namespace RFRocketLibrary.Utils
 {
@@ -61,6 +62,77 @@ namespace RFRocketLibrary.Utils
             return await client.DownloadDataTaskAsync(url);
         }
 
+        private static string GetDependencyLink(EDependency dependency, bool mirror)
+        {
+            var field = typeof(DependencyLink).GetField(dependency + (mirror ? "Mirror" : string.Empty));
+            if (field?.GetValue(null) is not string url || url.Length == 0)
+                throw new InvalidOperationException(
+                    $"No download link is registered for dependency '{dependency}'{(mirror ? " (mirror)" : string.Empty)}.");
+            return url;
+        }
+
+        private static string? GetExpectedIntegrity(EDependency dependency)
+        {
+            return typeof(DependencyIntegrity).GetField(dependency.ToString())?.GetValue(null) as string;
+        }
+
+        /// <summary>
+        /// Reads a cached dependency assembly and verifies it against the expected
+        /// integrity hash. Returns null (with a log entry) when the cache is missing,
+        /// unreadable or corrupted, so the caller can fall back to downloading.
+        /// </summary>
+        private static byte[]? ReadCachedAssembly(EDependency dependency, string cachePath)
+        {
+            try
+            {
+                byte[] data;
+                using (var fs = File.OpenRead(cachePath))
+                    data = StreamToByteArray(fs);
+
+                var expected = GetExpectedIntegrity(dependency);
+                if (!string.IsNullOrEmpty(expected) && GetIntegrity(data) != expected)
+                {
+                    Logger.LogWarning(
+                        $"[DependencyUtil] Cached '{dependency}' failed the integrity check (corrupted or outdated); downloading it again.");
+                    try
+                    {
+                        File.Delete(cachePath);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.LogWarning($"[DependencyUtil] Failed to remove the corrupted cache file '{cachePath}': {e.Message}");
+                    }
+
+                    return null;
+                }
+
+                return data;
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"[DependencyUtil] Failed to read cached '{dependency}' ({cachePath}): {e.Message}");
+                return null;
+            }
+        }
+
+        private static byte[] DownloadAssemblyChecked(WebClient client, EDependency dependency, bool mirror)
+        {
+            var data = DownloadAssembly(client, GetDependencyLink(dependency, mirror));
+            var expected = GetExpectedIntegrity(dependency);
+            if (!string.IsNullOrEmpty(expected) && GetIntegrity(data) != expected)
+                throw new InvalidOperationException($"Downloaded '{dependency}' failed the integrity check.");
+            return data;
+        }
+
+        private static async Task<byte[]> DownloadAssemblyCheckedAsync(WebClient client, EDependency dependency, bool mirror)
+        {
+            var data = await DownloadAssemblyAsync(client, GetDependencyLink(dependency, mirror));
+            var expected = GetExpectedIntegrity(dependency);
+            if (!string.IsNullOrEmpty(expected) && GetIntegrity(data) != expected)
+                throw new InvalidOperationException($"Downloaded '{dependency}' failed the integrity check.");
+            return data;
+        }
+
         public static bool CanBeLoaded(EDependency dependency)
         {
             if(Rocket.Core.Plugins.RocketPlugin.IsDependencyLoaded(dependency.ToString()))return false;
@@ -112,62 +184,57 @@ namespace RFRocketLibrary.Utils
 
             using var wc = new WebClient();
             wc.Proxy = null;
-            byte[] assembly = null;
             var cachePath = GetCachePath(dependency);
-            if (dependency != EDependency.RFRocketLibrary && IsCacheExists(dependency))
+            // The library never caches itself, otherwise a cached copy would
+            // pin an outdated version and defeat the self-update download.
+            var useCache = dependency != EDependency.RFRocketLibrary;
+            byte[]? assembly = null;
+
+            if (useCache && IsCacheExists(dependency))
+                assembly = ReadCachedAssembly(dependency, cachePath);
+
+            if (assembly == null)
             {
                 try
                 {
-                    using var fs = File.OpenRead(cachePath);
-                    assembly = StreamToByteArray(fs);
-                    fs.Close();
+                    assembly = DownloadAssemblyChecked(wc, dependency, mirror);
                 }
-                catch
+                catch (Exception e)
+                {
+                    Logger.LogWarning($"[DependencyUtil] Primary download for '{dependency}' failed: {e.Message}");
+                }
+
+                if (assembly == null)
                 {
                     try
                     {
-                        assembly = DownloadAssembly(wc, typeof(DependencyLink)
-                            .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
-                            .ToString());
+                        assembly = DownloadAssemblyChecked(wc, dependency, true);
                     }
-                    catch
+                    catch (Exception e)
                     {
-                        try
-                        {
-                            assembly = DownloadAssembly(wc, typeof(DependencyLink).GetField(dependency + "Mirror").GetValue(null)
-                            .ToString());
-                        }
-                        catch { }
+                        Logger.LogWarning($"[DependencyUtil] Mirror download for '{dependency}' failed: {e.Message}");
+                    }
+                }
+
+                if (assembly != null && useCache)
+                {
+                    try
+                    {
+                        File.WriteAllBytes(cachePath, assembly);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.LogWarning($"[DependencyUtil] Failed to cache '{dependency}' ({cachePath}): {e.Message}");
                     }
                 }
             }
-            else
-            {
-                try
-                {
-                    assembly = DownloadAssembly(wc, typeof(DependencyLink)
-                        .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
-                        .ToString());
-                }
-                catch
-                {
-                    try
-                    {
-                        assembly = DownloadAssembly(wc, typeof(DependencyLink).GetField(dependency + "Mirror").GetValue(null)
-                            .ToString());
-                    }
-                    catch { }
-                }
 
-                try
-                {
-                    if (dependency != EDependency.RFRocketLibrary)
-                        File.WriteAllBytes(cachePath, assembly);
-                }
-                catch (Exception)
-                {
-                    //
-                }
+            if (assembly == null)
+            {
+                Logger.LogError(
+                    $"[DependencyUtil] Unable to load dependency '{dependency}': every download failed and no valid cache exists.");
+                throw new InvalidOperationException(
+                    $"Dependency '{dependency}' could not be downloaded and no valid cache is available. See the log for details.");
             }
 
             Assembly.Load(assembly);
@@ -180,55 +247,57 @@ namespace RFRocketLibrary.Utils
 
             using var wc = new WebClient();
             wc.Proxy = null;
-            byte[] assembly;
             var cachePath = GetCachePath(dependency);
-            if (IsCacheExists(dependency))
+            // Same rule as Load: never read from or write to the cache for the
+            // library itself, otherwise a cached copy would defeat self-updates.
+            var useCache = dependency != EDependency.RFRocketLibrary;
+            byte[]? assembly = null;
+
+            if (useCache && IsCacheExists(dependency))
+                assembly = ReadCachedAssembly(dependency, cachePath);
+
+            if (assembly == null)
             {
                 try
                 {
-                    using var fs = File.OpenRead(cachePath);
-                    assembly = StreamToByteArray(fs);
-                    fs.Close();
+                    assembly = await DownloadAssemblyCheckedAsync(wc, dependency, mirror);
                 }
-                catch (Exception)
+                catch (Exception e)
+                {
+                    Logger.LogWarning($"[DependencyUtil] Primary download for '{dependency}' failed: {e.Message}");
+                }
+
+                if (assembly == null)
                 {
                     try
                     {
-                        assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink)
-                            .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
-                            .ToString());
+                        assembly = await DownloadAssemblyCheckedAsync(wc, dependency, true);
                     }
-                    catch
+                    catch (Exception e)
                     {
-                        assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink).GetField(dependency + "Mirror")
-                            .GetValue(null)
-                            .ToString());
+                        Logger.LogWarning($"[DependencyUtil] Mirror download for '{dependency}' failed: {e.Message}");
+                    }
+                }
+
+                if (assembly != null && useCache)
+                {
+                    try
+                    {
+                        File.WriteAllBytes(cachePath, assembly);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.LogWarning($"[DependencyUtil] Failed to cache '{dependency}' ({cachePath}): {e.Message}");
                     }
                 }
             }
-            else
-            {
-                try
-                {
-                    assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink)
-                        .GetField(dependency + $"{(mirror ? "Mirror" : string.Empty)}").GetValue(null)
-                        .ToString());
-                }
-                catch
-                {
-                    assembly = await DownloadAssemblyAsync(wc, typeof(DependencyLink).GetField(dependency + "Mirror")
-                        .GetValue(null)
-                        .ToString());
-                }
 
-                try
-                {
-                    File.WriteAllBytes(cachePath, assembly);
-                }
-                catch (Exception)
-                {
-                    //
-                }
+            if (assembly == null)
+            {
+                Logger.LogError(
+                    $"[DependencyUtil] Unable to load dependency '{dependency}': every download failed and no valid cache exists.");
+                throw new InvalidOperationException(
+                    $"Dependency '{dependency}' could not be downloaded and no valid cache is available. See the log for details.");
             }
 
             Assembly.Load(assembly);
